@@ -1,0 +1,34 @@
+# dexcli/config/defaults.yaml
+# Default configuration for DexCLI
+
+gemini:
+  executable: 'gemini'
+  args: ['chat']
+  readyString: '>'
+  readyTimeout: 5000
+  responseTimeout: 60000
+  stateful: true
+  ptyConfig:
+    cols: 80
+    rows: 24
+
+pool:
+  initialSize: 2
+  maxSize: 5
+  scaleUpThreshold: 3
+  scaleDownAfter: 300
+  recycleAfterRequests: 100
+
+tui:
+  geminiColor: 'blue'
+  inputColor: 'green'
+  statusColor: 'cyan'
+
+session:
+  dir: '~/.dexcli/sessions'
+  autoSaveInterval: 30000
+
+logging:
+  level: 'info'
+  logFile: '~/.dexcli/dexcli.log'
+  keepRawAnsi: true
