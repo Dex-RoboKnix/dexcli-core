@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import { CliInstance } from './CliInstance.js';
 import { execSync } from 'child_process';
+import { NullApprovalQueue } from '../../../../../packages/dexcli-core/src/null-queue.js';
+import { HARDCODE_REGEX } from '../../../../../packages/dexspine-core/src/dex838.js';
 
 export class CliPool extends EventEmitter {
   constructor(config) {
@@ -10,6 +12,7 @@ export class CliPool extends EventEmitter {
     this.taskQueue = [];
     this.healthCheckInterval = null;
     this.instanceCounter = 0;
+    this.approvalQueue = new NullApprovalQueue();
   }
 
   async initialize() {
@@ -65,7 +68,24 @@ export class CliPool extends EventEmitter {
     };
   }
 
+  _hasHardcodeQualifier(prompt) {
+    HARDCODE_REGEX.lastIndex = 0;
+    return HARDCODE_REGEX.test(prompt);
+  }
+
+  async approveAndExecute(approvalId) {
+    const card = this.approvalQueue.approve(approvalId, true);
+    if (card.status !== 'approved_by_layer8') {
+      throw new Error(`Approval ${approvalId} was not approved`);
+    }
+    return this.execute(card.subject.prompt, { ...card.subject.options, bypassApproval: true });
+  }
+
   async execute(prompt, options = {}) {
+    if (!options.bypassApproval && this._hasHardcodeQualifier(prompt)) {
+      return this.approvalQueue.requestApproval({ subject: { prompt, options } });
+    }
+
     const healthyInstances = this.instances.filter(i => i.status !== 'failed' && i.status !== 'killed');
     if (healthyInstances.length === 0) {
       throw new Error('All Gemini instances have failed. Check gemini-cli installation and auth.');
