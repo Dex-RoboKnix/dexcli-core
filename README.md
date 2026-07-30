@@ -1,5 +1,7 @@
 # DexCLI
 
+> **Canonical copy:** This is the canonical interactive TUI swarm orchestrator with real PTY execution; `packages/dexcli-core` contains the canonical Layer 8 safety-gate logic (`NullApprovalQueue`) to be integrated into this orchestrator.
+
 Gemini CLI swarm orchestrator. 2 instances. $0.02 per feature.
 
 DexCLI is a terminal multiplexer that spawns persistent Gemini CLI processes via pseudo-terminals, routes tasks to idle instances, extracts artifacts from output, and presents results in a split-pane TUI.
