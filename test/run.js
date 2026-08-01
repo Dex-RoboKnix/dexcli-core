@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 
 export const PURE_TESTS = [
   'phase1-check.js',
+  'workspace-guard.test.js',
   'phase1a-auth.test.js',
   'unauthenticated-provider.test.js',
   'phase2-check.js',
