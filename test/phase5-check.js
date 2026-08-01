@@ -12,6 +12,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { fileURLToPath } from 'url';
+
 import { PROVIDER_ID_TO_STRATEGY, strategyForProviderId, getProvider } from '../src/providers/index.js';
 import { PROVIDER_TYPES, ProviderRegistry, AGENT_ROLES } from '../src/lib/ProviderRegistry.js';
 import { Orchestrator } from '../src/lib/Orchestrator.js';
@@ -58,8 +60,8 @@ async function main() {
     }
   });
 
-  await check('google -> gemini, anthropic -> claude (the two PTY_REPL vendors)', () => {
-    assert(strategyForProviderId(PROVIDER_TYPES.GOOGLE) === 'gemini');
+  await check('google -> agy, anthropic -> claude (the two PTY_REPL vendors)', () => {
+    assert(strategyForProviderId(PROVIDER_TYPES.GOOGLE) === 'agy');
     assert(strategyForProviderId(PROVIDER_TYPES.ANTHROPIC) === 'claude');
   });
 
@@ -76,7 +78,7 @@ async function main() {
     const registry = new ProviderRegistry();
     const roleConfig = registry.getRoleConfig(AGENT_ROLES.SUBAGENT_IMPLEMENTATION);
     const strategy = strategyForProviderId(roleConfig.providerId);
-    assert(strategy === 'gemini', `default implementation role should resolve to gemini, got ${strategy}`);
+    assert(strategy === 'agy', `default implementation role should resolve to agy, got ${strategy}`);
   });
 
   console.log('\n--- F4: AgentsSpecResolver wired into Orchestrator prompts ---');
@@ -131,7 +133,7 @@ async function main() {
 
   await check('InstancePool.js is on the production-lock forbidden list', () => {
     const lockSrc = fs.readFileSync(
-      path.join(path.dirname(new URL(import.meta.url).pathname), 'production-lock.js'),
+      path.join(path.dirname(fileURLToPath(import.meta.url)), 'production-lock.js'),
       'utf8'
     );
     assert(lockSrc.includes("'src/lib/InstancePool.js'"), 'InstancePool.js not registered as forbidden in production-lock.js');
