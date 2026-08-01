@@ -28,6 +28,8 @@ async function productionLock() {
     'src/lib/AgentsSpecResolver.js',
     'src/lib/Dex838.js',
     'src/lib/DexFilter.js',
+    'src/lib/SetupWizard.js',
+    'src/lib/AdeBridge.js',
     'config/defaults.yaml',
     'config/roles.yaml'
   ];

@@ -60,6 +60,11 @@ export class CliPool extends EventEmitter {
       this.emit('instance:crashed', { id, ...info });
     });
 
+    // Re-emitted at the pool level so a single listener (e.g. AdeBridge, F7) can
+    // observe every instance's PTY stream without reaching into this.instances itself.
+    instance.on('data', (info) => this.emit('instance:data', info));
+    instance.on('response', (info) => this.emit('instance:response', info));
+
     try {
       await instance.start();
       this.emit('instance:ready', { id });

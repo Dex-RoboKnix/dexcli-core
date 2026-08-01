@@ -4,10 +4,17 @@ import { CliPool } from './lib/CliPool.js';
 import { Orchestrator } from './lib/Orchestrator.js';
 import { SessionState } from './lib/SessionState.js';
 import { TUI } from './lib/TUI.js';
+import { SetupWizard } from './lib/SetupWizard.js';
+import { AdeBridge } from './lib/AdeBridge.js';
 
 async function main() {
   const args = process.argv.slice(2);
-  
+
+  if (args[0] === 'setup') {
+    await runSetup(args.slice(1));
+    return;
+  }
+
   let configPath = undefined;
   const configIdx = args.findIndex(a => a === '--config');
   if (configIdx !== -1 && args[configIdx + 1]) {
@@ -42,7 +49,21 @@ async function main() {
   }
 
   const orchestrator = new Orchestrator(pool, config);
-  
+
+  // F7: broadcast this pool's PTY streams to the ADE runtime if one is listening.
+  // Opt-out via config or --no-ade-bridge since most dexcli runs happen outside ADE
+  // entirely; connection failures are swallowed to a warning, never fatal to the swarm.
+  let adeBridge = null;
+  if (config.ade?.bridge !== false && !args.includes('--no-ade-bridge')) {
+    adeBridge = new AdeBridge(pool, {
+      host: config.ade?.host,
+      port: config.ade?.port,
+      onError: (err) => {
+        if (args.includes('--verbose')) console.warn(`[AdeBridge] ${err.message}`);
+      }
+    }).start();
+  }
+
   // Handle session restoration
   let sessionId = undefined;
   const resumeIdx = args.findIndex(a => a === '--resume');
@@ -81,6 +102,7 @@ async function main() {
   // Graceful shutdown on signals
   const shutdown = async () => {
     console.log('\nShutting down...');
+    if (adeBridge) adeBridge.stop();
     await session.save({
       instances: pool.instances.map(i => i.toJSON()),
       executionLog: orchestrator.executionLog
@@ -91,6 +113,32 @@ async function main() {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+}
+
+async function runSetup(args) {
+  const configIdx = args.findIndex(a => a === '--config');
+  const configPath = configIdx !== -1 ? args[configIdx + 1] : undefined;
+
+  if (args.includes('--check')) {
+    // Non-interactive: print current validation state and exit. Used by CI/tests
+    // and by operators who just want to know if setup is needed before launching a TUI.
+    const wizard = new SetupWizard({ configPath });
+    const { valid, problems } = wizard.check();
+    if (valid) {
+      console.log('✅ Provider setup is valid — all roles resolve to an enabled provider with a model.');
+    } else {
+      console.log('❌ Provider setup has problems:');
+      problems.forEach(p => console.log(`  - ${p}`));
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  const wizard = new SetupWizard({ configPath });
+  const { saved } = await wizard.run();
+  if (!saved) {
+    console.log('Setup abandoned — no changes saved.');
+  }
 }
 
 async function singleShotMode(prompt, orchestrator, pool, session) {
@@ -156,6 +204,11 @@ async function pipedMode(orchestrator, pool, session) {
 function printHelp() {
   console.log(`
 Usage: dexcli [prompt] [options]
+       dexcli setup [--check] [--config PATH]
+
+Setup:
+  setup              Interactive provider/role wizard (blessed TUI)
+  setup --check      Print validation state and exit (non-interactive)
 
 Options:
   --instances N      Number of Gemini instances (default from config)

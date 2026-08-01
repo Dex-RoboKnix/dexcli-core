@@ -10,7 +10,8 @@ const tests = [
   'phase2-check.js',
   'phase3-check.js',
   'phase4-check.js',
-  'phase5-check.js'
+  'phase5-check.js',
+  'phase6-check.js'
 ];
 
 console.log('🚀 Running DexCLI Test Suite...\n');
