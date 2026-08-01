@@ -1,6 +1,8 @@
 import pty from 'node-pty';
 import { EventEmitter } from 'events';
 import { StreamCleaner } from './StreamCleaner.js';
+import { getProvider } from '../providers/index.js';
+import { applyDexFilter } from './DexFilter.js';
 
 export class CliInstance extends EventEmitter {
   constructor(id, config) {
@@ -16,24 +18,26 @@ export class CliInstance extends EventEmitter {
     this.readyResolve = null;
     this.responseResolve = null;
     this.taskCount = 0;
+    this.provider = getProvider(this.config.provider || 'gemini');
   }
 
   async start() {
     this.status = 'starting';
+    const spawnConfig = this.provider.getSpawnConfig(this.config);
     return new Promise((resolve, reject) => {
       this.readyResolve = resolve;
       const timeout = setTimeout(() => {
         if (this.status === 'starting') {
           this.status = 'failed';
-          reject(new Error(`Ready timeout after ${this.config.readyTimeout}ms`));
+          reject(new Error(`Ready timeout after ${spawnConfig.readyTimeout}ms`));
         }
-      }, this.config.readyTimeout || 5000);
+      }, spawnConfig.readyTimeout);
 
       try {
-        this.process = pty.spawn(this.config.executable, this.config.args, {
+        this.process = pty.spawn(spawnConfig.executable, spawnConfig.args, {
           name: 'xterm-256color',
-          cols: this.config.ptyConfig?.cols || 80,
-          rows: this.config.ptyConfig?.rows || 24,
+          cols: spawnConfig.ptyConfig?.cols || 80,
+          rows: spawnConfig.ptyConfig?.rows || 24,
           cwd: process.cwd(),
           env: { ...process.env }
         });
@@ -63,7 +67,8 @@ export class CliInstance extends EventEmitter {
   _handleData(cleaned, raw) {
     this.emit('data', { id: this.id, chunk: cleaned, raw });
 
-    const readyString = this.config.readyString || '>';
+    const spawnConfig = this.provider.getSpawnConfig(this.config);
+    const readyString = spawnConfig.readyString;
     
     // Robust prompt detection: check if buffer contains readyString followed by nothing but space/non-printables
     const escapedReady = readyString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -93,7 +98,20 @@ export class CliInstance extends EventEmitter {
         response = response.substring(0, readyIndex).trim();
       }
 
-      this.emit('response', { id: this.id, response });
+      // F5: reduce raw PTY stdout before it ever reaches the orchestrator — ANSI/OSC
+      // strip, redraw collapse, dedupe, head+tail truncation. Reduction stats go to the
+      // debug log so a shrinking/growing signal is visible without re-reading raw output.
+      const { text: filtered, stats } = applyDexFilter(response);
+      response = filtered;
+      if (this.config.debug) {
+        console.debug(
+          `[CliInstance ${this.id}] DEXFILTER: ${stats.rawLines} raw -> ${stats.keptLines} kept ` +
+          `(dropped ${stats.droppedNoise} noise, collapsed ${stats.collapsed} repeats, truncated ${stats.truncated})`
+        );
+      }
+      this.lastFilterStats = stats;
+
+      this.emit('response', { id: this.id, response, filterStats: stats });
       if (this.responseResolve) {
         const { resolve, timeout } = this.responseResolve;
         clearTimeout(timeout);
@@ -115,6 +133,7 @@ export class CliInstance extends EventEmitter {
     this.taskCount++;
 
     return new Promise((resolve, reject) => {
+      const spawnConfig = this.provider.getSpawnConfig(this.config);
       const timeout = setTimeout(() => {
         if (this.status === 'busy') {
           this.status = 'idle'; // Recover to idle? Or failed? Spec says idle.
@@ -124,7 +143,7 @@ export class CliInstance extends EventEmitter {
             reject(new Error('Response timeout'));
           }
         }
-      }, this.config.responseTimeout || 60000);
+      }, spawnConfig.responseTimeout);
 
       this.responseResolve = { resolve, reject, timeout };
       this.process.write(prompt + '\r\n');

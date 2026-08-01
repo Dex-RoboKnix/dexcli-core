@@ -8,7 +8,9 @@ const tests = [
   'phase1-check.js',
   'smoke-test.js',
   'phase2-check.js',
-  'phase3-check.js'
+  'phase3-check.js',
+  'phase4-check.js',
+  'phase5-check.js'
 ];
 
 console.log('🚀 Running DexCLI Test Suite...\n');

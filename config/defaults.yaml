@@ -1,9 +1,38 @@
 # dexcli/config/defaults.yaml
 # Default configuration for DexCLI
 
+# 'provider' is a last-resort fallback only — CliPool resolves the real per-role
+# provider via ProviderRegistry.getRoleConfig() (see src/lib/ProviderRegistry.js and
+# src/providers/index.js's PROVIDER_ID_TO_STRATEGY map). This key exists so a
+# CliInstance built without going through CliPool's resolution still has a sane
+# default rather than an undefined provider name.
+provider: 'gemini'
+
 gemini:
   executable: 'gemini'
   args: ['chat']
+  readyString: '>'
+  readyTimeout: 5000
+  responseTimeout: 60000
+  stateful: true
+  ptyConfig:
+    cols: 80
+    rows: 24
+
+claude:
+  executable: 'claude'
+  args: ['chat']
+  readyString: '>'
+  readyTimeout: 5000
+  responseTimeout: 60000
+  stateful: true
+  ptyConfig:
+    cols: 80
+    rows: 24
+
+mock:
+  executable: 'echo'
+  args: ['mock']
   readyString: '>'
   readyTimeout: 5000
   responseTimeout: 60000

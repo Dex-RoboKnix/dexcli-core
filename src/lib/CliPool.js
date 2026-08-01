@@ -3,6 +3,8 @@ import { CliInstance } from './CliInstance.js';
 import { execSync } from 'child_process';
 import { NullApprovalQueue } from '../../../../../packages/dexcli-core/src/null-queue.js';
 import { HARDCODE_REGEX } from '../../../../../packages/dexspine-core/src/dex838.js';
+import { ProviderRegistry, AGENT_ROLES } from './ProviderRegistry.js';
+import { strategyForProviderId } from '../providers/index.js';
 
 export class CliPool extends EventEmitter {
   constructor(config) {
@@ -13,16 +15,29 @@ export class CliPool extends EventEmitter {
     this.healthCheckInterval = null;
     this.instanceCounter = 0;
     this.approvalQueue = new NullApprovalQueue();
+    // ProviderRegistry.getRoleConfig() is the resolution layer for "which vendor and
+    // model serves this role" — CliPool never reads a hardcoded 'gemini' config key
+    // directly, it asks the registry, then maps the resolved provider to a spawn
+    // strategy (F3). Callers may inject a pre-built registry (e.g. loaded from
+    // ~/.dexcli/providers.json by the setup wizard); default is fresh-install defaults.
+    this.registry = config.providerRegistry instanceof ProviderRegistry
+      ? config.providerRegistry
+      : ProviderRegistry.load();
+  }
+
+  /**
+   * Resolve a role to a concrete per-instance spawn config: strategy name (which
+   * providers/*.js module drives the PTY) plus the vendor-specific settings section
+   * from defaults.yaml/ConfigLoader, overlaid with the registry's chosen model.
+   */
+  _resolveInstanceConfig(role = AGENT_ROLES.SUBAGENT_IMPLEMENTATION) {
+    const roleConfig = this.registry.getRoleConfig(role);
+    const strategy = strategyForProviderId(roleConfig.providerId);
+    const base = this.config[strategy] || {};
+    return { ...base, provider: strategy, modelId: roleConfig.modelId, role };
   }
 
   async initialize() {
-    try {
-      // Basic check for executable
-      // execSync(`${this.config.gemini.executable} --version`, { stdio: 'ignore' });
-    } catch (e) {
-      throw new Error(`Gemini CLI not found: ${this.config.gemini.executable}. Please install it first.`);
-    }
-
     const initialSize = this.config.pool.initialSize || 2;
     const spawnPromises = [];
 
@@ -35,9 +50,10 @@ export class CliPool extends EventEmitter {
     return { ready: this.instances.length, failed: 0 };
   }
 
-  async _spawnInstance() {
-    const id = `gemini-${this.instanceCounter++}`;
-    const instance = new CliInstance(id, this.config.gemini);
+  async _spawnInstance(role = AGENT_ROLES.SUBAGENT_IMPLEMENTATION) {
+    const instanceConfig = this._resolveInstanceConfig(role);
+    const id = `${instanceConfig.provider}-${this.instanceCounter++}`;
+    const instance = new CliInstance(id, instanceConfig);
     this.instances.push(instance);
     
     instance.on('exit', (info) => {
@@ -88,7 +104,7 @@ export class CliPool extends EventEmitter {
 
     const healthyInstances = this.instances.filter(i => i.status !== 'failed' && i.status !== 'killed');
     if (healthyInstances.length === 0) {
-      throw new Error('All Gemini instances have failed. Check gemini-cli installation and auth.');
+      throw new Error('All provider instances have failed. Check CLI installation and auth for the configured provider(s).');
     }
 
     let instance = this.getIdle();

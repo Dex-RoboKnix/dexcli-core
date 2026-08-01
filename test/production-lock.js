@@ -24,6 +24,10 @@ async function productionLock() {
     'src/lib/ConfigLoader.js',
     'src/lib/StreamCleaner.js',
     'src/lib/TUI.js',
+    'src/lib/ProviderRegistry.js',
+    'src/lib/AgentsSpecResolver.js',
+    'src/lib/Dex838.js',
+    'src/lib/DexFilter.js',
     'config/defaults.yaml',
     'config/roles.yaml'
   ];
@@ -40,6 +44,32 @@ async function productionLock() {
 
   if (!allExist) {
     console.error('❌ PRODUCTION LOCK FAILED: Missing files');
+    process.exit(1);
+  }
+
+  // Withdrawn modules. Re-adding these forks the DEX838 grammar away from its SSOT in
+  // packages/dexspine-core — see _context-dump/_plan/DECISIONS.md, Cluster F (2026-07-29).
+  const forbiddenFiles = {
+    'src/lib/Dex838Machining.js':
+      'forked the DEX838 grammar; use src/lib/Dex838.js (re-exports dexspine-core)',
+    'src/lib/AnsiCleaner.js':
+      'CJS module in an ESM package, superseded by StreamCleaner.js',
+    'src/lib/InstancePool.js':
+      'CJS require() in an ESM package (same defect class as AnsiCleaner.js) and written ' +
+      'against a CliInstance API (waitForReady/isReady/getStatus) that no longer exists; ' +
+      'superseded by CliPool.js, which the current CliInstance is built for. See F10.'
+  };
+
+  let noneForbidden = true;
+  for (const [f, reason] of Object.entries(forbiddenFiles)) {
+    if (fs.existsSync(path.join(rootDir, f))) {
+      console.error(`❌ ${f} must not exist — ${reason}`);
+      noneForbidden = false;
+    }
+  }
+
+  if (!noneForbidden) {
+    console.error('❌ PRODUCTION LOCK FAILED: Withdrawn modules present');
     process.exit(1);
   }
 
