@@ -5,9 +5,9 @@ import os from 'os';
 class ConfigLoader {
   constructor() {
     this.config = {
-      gemini: {
-        executable: process.platform === 'win32' ? 'gemini.cmd' : 'gemini',
-        args: ['chat'],
+      agy: {
+        executable: 'agy',
+        args: ['--dangerously-skip-permissions'],
         readyString: '>',
         readyTimeout: 5000,
         responseTimeout: 60000,

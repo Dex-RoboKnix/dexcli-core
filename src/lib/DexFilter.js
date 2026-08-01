@@ -44,7 +44,8 @@ export function applyDexFilter(rawOutput, options = {}) {
 
   // Carriage returns are in-place redraws, not line breaks: keep only the final frame
   // of each redraw group rather than every intermediate spinner state.
-  const normalised = stripAnsi(rawOutput)
+  const cleanRaw = stripAnsi(rawOutput).replace(/\r\n/g, '\n');
+  const normalised = cleanRaw
     .split('\n')
     .map(line => {
       const frames = line.split('\r');

@@ -12,7 +12,9 @@
   },
   "scripts": {
     "start": "node src/dexcli.js",
-    "test": "node test/run.js"
+    "test": "node test/run.js",
+    "test:pure": "node test/run.js --pure",
+    "test:pty": "node test/run.js --pty"
   },
   "engines": {
     "node": ">=18.0.0"

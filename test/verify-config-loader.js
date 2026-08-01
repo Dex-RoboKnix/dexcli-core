@@ -3,10 +3,10 @@ import os from 'os';
 
 console.log(`Platform: ${os.platform()}`);
 const config = configLoader.load();
-console.log(`Default Executable: ${config.gemini.executable}`);
+console.log(`Default Executable: ${config.agy.executable}`);
 
-if (os.platform() === 'win32' && config.gemini.executable !== 'gemini.cmd') {
-  console.error('❌ Failed: Expected gemini.cmd on Windows');
+if (config.agy.executable !== 'agy') {
+  console.error('❌ Failed: Expected agy on Windows');
   process.exit(1);
 } else {
   console.log('✅ Passed: ConfigLoader defaults correct');

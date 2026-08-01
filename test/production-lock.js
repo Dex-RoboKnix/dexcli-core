@@ -25,6 +25,7 @@ async function productionLock() {
     'src/lib/StreamCleaner.js',
     'src/lib/TUI.js',
     'src/lib/ProviderRegistry.js',
+    'src/lib/ProviderAuthStatus.js',
     'src/lib/AgentsSpecResolver.js',
     'src/lib/Dex838.js',
     'src/lib/DexFilter.js',

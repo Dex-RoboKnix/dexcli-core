@@ -1,8 +1,13 @@
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { execSync } from 'child_process';
 import pty from 'node-pty';
 import { EventEmitter } from 'events';
 import { StreamCleaner } from './StreamCleaner.js';
 import { getProvider } from '../providers/index.js';
 import { applyDexFilter } from './DexFilter.js';
+import { checkProviderAuthStatus, AUTH_STATUS, resolveExecutable } from './ProviderAuthStatus.js';
 
 export class CliInstance extends EventEmitter {
   constructor(id, config) {
@@ -16,25 +21,89 @@ export class CliInstance extends EventEmitter {
     this.buffer = '';
     this.process = null;
     this.readyResolve = null;
+    this.readyReject = null;
+    this.readyTimeout = null;
     this.responseResolve = null;
     this.taskCount = 0;
-    this.provider = getProvider(this.config.provider || 'gemini');
+    this.provider = getProvider(this.config.provider || 'agy');
+  }
+
+  /**
+   * Note (T029 / T030): Banner-text regex matching (_detectAuthError) is a fallback heuristic,
+   * not the primary check. The primary check is pure-function credential/file inspection
+   * (checkProviderAuthStatus) run prior to spawn. The secondary buffer scan is retained
+   * because some auth errors (such as expired session tokens or server-side revokes) only
+   * appear in the REPL output after spawn.
+   */
+  _detectAuthError(buffer) {
+    const AUTH_ERROR_PATTERNS = [
+      /Not logged in/i,
+      /Please run \/login/i,
+      /Please log in/i,
+      /Please login/i,
+      /Authentication required/i,
+      /Auth required/i,
+      /Unauthorized/i,
+      /401 Unauthorized/i,
+      /Invalid API key/i,
+      /API key missing/i,
+      /No API key/i,
+      /API key not found/i,
+      /Authentication error/i,
+      /Auth failure/i,
+      /Authentication failed/i,
+      /How would you like to authenticate/i,
+      /Sign in with Google/i,
+      /Failed to sign in/i,
+      /Do you want to continue\?/i,
+      /Enter to select/i
+    ];
+    for (const pattern of AUTH_ERROR_PATTERNS) {
+      const match = buffer.match(pattern);
+      if (match) {
+        return match[0];
+      }
+    }
+    return null;
   }
 
   async start() {
     this.status = 'starting';
-    const spawnConfig = this.provider.getSpawnConfig(this.config);
+    let spawnConfig;
+    try {
+      spawnConfig = this.provider.getSpawnConfig(this.config);
+    } catch (err) {
+      this.status = 'failed';
+      throw new Error(`Provider "${this.provider.name}" failed spawn config: ${err.message}`);
+    }
+
+    const providerId = this.config.provider || this.provider.name;
+    const authResult = checkProviderAuthStatus(providerId, spawnConfig);
+
+    if (authResult.status !== AUTH_STATUS.AUTHENTICATED) {
+      this.status = 'failed';
+      const exeStr = authResult.executable || spawnConfig.executable || 'none';
+      throw new Error(
+        `Provider "${this.provider.name}" (executable: ${exeStr}) is ${authResult.status}: ${authResult.reason}`
+      );
+    }
+
     return new Promise((resolve, reject) => {
       this.readyResolve = resolve;
-      const timeout = setTimeout(() => {
+      this.readyReject = reject;
+      this.readyTimeout = setTimeout(() => {
         if (this.status === 'starting') {
           this.status = 'failed';
+          this.readyResolve = null;
+          this.readyReject = null;
           reject(new Error(`Ready timeout after ${spawnConfig.readyTimeout}ms`));
         }
       }, spawnConfig.readyTimeout);
 
       try {
-        this.process = pty.spawn(spawnConfig.executable, spawnConfig.args, {
+        const executable = authResult.executable || resolveExecutable(spawnConfig.executable) || spawnConfig.executable;
+
+        this.process = pty.spawn(executable, spawnConfig.args, {
           name: 'xterm-256color',
           cols: spawnConfig.ptyConfig?.cols || 80,
           rows: spawnConfig.ptyConfig?.rows || 24,
@@ -52,13 +121,26 @@ export class CliInstance extends EventEmitter {
           const prevStatus = this.status;
           this.status = 'killed';
           this.emit('exit', { code: exitCode, signal });
-          if (prevStatus === 'busy' && this.responseResolve) {
+          if (prevStatus === 'starting' && this.readyReject) {
+            if (this.readyTimeout) clearTimeout(this.readyTimeout);
+            this.status = 'failed';
+            const authErr = this._detectAuthError(this.buffer);
+            const errDetail = authErr
+              ? `Provider "${this.provider.name}" (executable: ${spawnConfig.executable}) is unauthenticated or requires login: "${authErr}"`
+              : `Provider process "${spawnConfig.executable}" exited during startup with exit code ${exitCode}. Output: ${this.buffer.trim() || 'none'}`;
+            const rejectFn = this.readyReject;
+            this.readyResolve = null;
+            this.readyReject = null;
+            rejectFn(new Error(errDetail));
+          } else if (prevStatus === 'busy' && this.responseResolve) {
             this.responseResolve.reject(new Error('Instance crashed mid-task'));
           }
         });
       } catch (err) {
         this.status = 'failed';
-        clearTimeout(timeout);
+        if (this.readyTimeout) clearTimeout(this.readyTimeout);
+        this.readyResolve = null;
+        this.readyReject = null;
         reject(err);
       }
     });
@@ -72,25 +154,53 @@ export class CliInstance extends EventEmitter {
     
     // Robust prompt detection: check if buffer contains readyString followed by nothing but space/non-printables
     const escapedReady = readyString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const readyRegex = new RegExp(`${escapedReady}[\\s\\x00-\\x1F]*$`);
+    const readyRegex = new RegExp(`(?:^|[\\r\\n]|[a-zA-Z0-9_-]+)${escapedReady}(?:[\\r\\n]|\\s|$)`);
     const isMatch = readyRegex.test(this.buffer.replace(/X/g, ' '));
     
-    if (this.status === 'starting' && isMatch) {
-      this.status = 'idle';
-      this.emit('ready', { id: this.id });
-      if (this.readyResolve) {
-        const resolve = this.readyResolve;
+    if (this.status === 'starting') {
+      if (/Do you trust the contents of this project\?/i.test(this.buffer) && !this._sentTrustConfirm) {
+        this._sentTrustConfirm = true;
+        try {
+          this.process.write('\r\n');
+        } catch (e) {
+          // ignore
+        }
+      }
+      const authErr = this._detectAuthError(this.buffer);
+      if (authErr && this.readyReject) {
+        this.status = 'failed';
+        if (this.readyTimeout) clearTimeout(this.readyTimeout);
+        this.kill();
+        const rejectFn = this.readyReject;
         this.readyResolve = null;
-        resolve();
+        this.readyReject = null;
+        rejectFn(new Error(`Provider "${this.provider.name}" (executable: ${spawnConfig.executable}) is unauthenticated or requires login: "${authErr}"`));
+        return;
+      }
+      if (isMatch) {
+        this.status = 'idle';
+        if (this.readyTimeout) clearTimeout(this.readyTimeout);
+        this.emit('ready', { id: this.id });
+        if (this.readyResolve) {
+          const resolve = this.readyResolve;
+          this.readyResolve = null;
+          this.readyReject = null;
+          resolve();
+        }
       }
     } else if (this.status === 'busy' && isMatch) {
       this.status = 'idle';
       const lastPrompt = this.history[this.history.length - 1];
       let response = this.buffer.trim();
       
-      const echoIndex = response.indexOf(lastPrompt);
+      const normalizedResponse = response.replace(/\r\n/g, '\n');
+      const normalizedPrompt = lastPrompt ? lastPrompt.replace(/\r\n/g, '\n') : '';
+      
+      const echoIndex = normalizedPrompt ? normalizedResponse.indexOf(normalizedPrompt) : -1;
       if (echoIndex !== -1) {
-        response = response.substring(echoIndex + lastPrompt.length).trim();
+        response = normalizedResponse.substring(echoIndex + normalizedPrompt.length).trim();
+      } else {
+        response = normalizedResponse;
       }
       
       const readyIndex = response.lastIndexOf(readyString);

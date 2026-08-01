@@ -9,8 +9,8 @@ async function smokeTest() {
   console.log('--- Smoke Test with Mock Gemini ---');
 
   const config = {
-    gemini: {
-      executable: 'C:\\nvm4w\\nodejs\\node.exe',
+    agy: {
+      executable: process.execPath,
       args: [path.join(__dirname, 'mocks', 'mock-gemini.js')],
       readyString: '>',
       readyTimeout: 5000,
@@ -49,6 +49,7 @@ async function smokeTest() {
     await pool.shutdown();
     console.log('✅ Pool shutdown');
     console.log('--- Smoke Test Passed ---');
+    process.exit(0);
   } catch (err) {
     console.error(`❌ Smoke test failed: ${err.message}`);
     process.exit(1);

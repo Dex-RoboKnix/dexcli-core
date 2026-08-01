@@ -8,6 +8,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { ProviderRegistry, PROVIDER_TYPES, AGENT_ROLES, AUTH_METHODS } from '../src/lib/ProviderRegistry.js';
 import { AgentsSpecResolver, SPEC_MODES } from '../src/lib/AgentsSpecResolver.js';
@@ -248,7 +249,7 @@ check('non-string input throws instead of coercing', () =>
   throws(() => applyDexFilter({ not: 'a string' })));
 
 check('withdrawn forked modules are gone', () => {
-  const libDir = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'src', 'lib');
+  const libDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'lib');
   for (const gone of ['Dex838Machining.js', 'AnsiCleaner.js']) {
     assert(!fs.existsSync(path.join(libDir, gone)),
       `${gone} is back — it forked the DEX838 grammar, see DECISIONS.md Cluster F`);

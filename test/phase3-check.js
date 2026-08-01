@@ -16,12 +16,13 @@ async function testIntegration() {
   
   // Create a config without quotes and with forward slashes for simplicity
   const config = `
-gemini:
-  executable: ${nodePath.replace(/\\/g, '/')}
-  args: [${mockGeminiPath.replace(/\\/g, '/')}]
-  readyString: >
-pool:
-  initialSize: 1
+agy.executable: ${nodePath.replace(/\\/g, '/')}
+agy.args: [${mockGeminiPath.replace(/\\/g, '/')}]
+agy.readyString: >
+gemini.executable: ${nodePath.replace(/\\/g, '/')}
+gemini.args: [${mockGeminiPath.replace(/\\/g, '/')}]
+gemini.readyString: >
+pool.initialSize: 1
 `;
   fs.writeFileSync(configPath, config);
 

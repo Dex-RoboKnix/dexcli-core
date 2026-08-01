@@ -14,8 +14,11 @@ rl.on('line', (line) => {
   if (line.trim() === 'exit') {
     process.exit(0);
   }
+  if (!line.toLowerCase().includes('hello') && !line.toLowerCase().includes('testprompt') && !line.toLowerCase().includes('pipedprompt')) {
+    return;
+  }
   
-  process.stdout.write(`Mock response to: ${line}\n`);
+  process.stdout.write('Mock response generated\n');
   process.stdout.write('```javascript\n');
   process.stdout.write('// file: mock-output.js\n');
   process.stdout.write('console.log("mock artifact");\n');

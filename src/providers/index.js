@@ -1,10 +1,12 @@
-import { geminiProvider } from './gemini.js';
+import { agyProvider } from './agy.js';
 import { mockProvider } from './mock.js';
 import { claudeProvider } from './claude.js';
 import { PROVIDER_TYPES } from '../lib/ProviderRegistry.js';
 
 const providers = new Map();
-providers.set('gemini', geminiProvider);
+providers.set('agy', agyProvider);
+providers.set('antigravity', agyProvider);
+providers.set('gemini', agyProvider);
 providers.set('mock', mockProvider);
 providers.set('claude', claudeProvider);
 
@@ -30,7 +32,7 @@ export function registerProvider(name, provider) {
  * visibly-fake instance instead of crashing the pool.
  */
 export const PROVIDER_ID_TO_STRATEGY = {
-  [PROVIDER_TYPES.GOOGLE]: 'gemini',
+  [PROVIDER_TYPES.GOOGLE]: 'agy',
   [PROVIDER_TYPES.ANTHROPIC]: 'claude',
   [PROVIDER_TYPES.OPENROUTER]: 'mock',
   [PROVIDER_TYPES.OPENAI]: 'mock',

@@ -6,11 +6,11 @@
 # src/providers/index.js's PROVIDER_ID_TO_STRATEGY map). This key exists so a
 # CliInstance built without going through CliPool's resolution still has a sane
 # default rather than an undefined provider name.
-provider: 'gemini'
+provider: 'agy'
 
-gemini:
-  executable: 'gemini'
-  args: ['chat']
+agy:
+  executable: 'agy'
+  args: ['--dangerously-skip-permissions']
   readyString: '>'
   readyTimeout: 5000
   responseTimeout: 60000
