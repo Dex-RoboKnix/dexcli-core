@@ -1,12 +1,14 @@
 import { TaskDecomposer } from './TaskDecomposer.js';
 import { ArtifactParser } from './ArtifactParser.js';
 import { AgentsSpecResolver, SPEC_MODES } from './AgentsSpecResolver.js';
+import { Logger } from './Logger.js';
 
 export class Orchestrator {
   constructor(pool, config = {}) {
     this.pool = pool;
     this.config = config;
-    this.decomposer = new TaskDecomposer();
+    this.logger = pool?.logger instanceof Logger ? pool.logger : new Logger(config);
+    this.decomposer = new TaskDecomposer(this.logger);
     this.parser = new ArtifactParser();
     this.executionLog = [];
     // F4: workspace AGENTS.md/CLAUDE.md rules must reach the L1 agent's prompts, not just
@@ -36,15 +38,18 @@ export class Orchestrator {
 
   async execute(userPrompt) {
     const startTime = Date.now();
+    this.logger.info(`[Orchestrator] execute() start: ${JSON.stringify(userPrompt).slice(0, 200)}`);
     let tasks;
     if (this.config.smartDecompose) {
       tasks = await this.decomposer.smartDecompose(userPrompt, this.pool);
     } else {
       tasks = this.decomposer.decompose(userPrompt);
     }
+    this.logger.debug(`[Orchestrator] decomposed into ${tasks.length} task(s): ${tasks.map(t => t.id).join(', ')}`);
 
     const results = await this.executeParallel(tasks);
-    
+    this.logger.info(`[Orchestrator] execute() done in ${Date.now() - startTime}ms: ${results.length} result(s)`);
+
     const allArtifacts = [];
     results.forEach(res => {
       const artifacts = this.parser.parse(res.response, {
@@ -80,12 +85,14 @@ export class Orchestrator {
 
     for (const priority of sortedPriorities) {
       const groupTasks = priorityGroups[priority];
+      this.logger.debug(`[Orchestrator] dispatching priority group ${priority}: ${groupTasks.length} task(s)`);
       const groupResults = await Promise.all(
         groupTasks.map(async task => {
           try {
             const res = await this.pool.execute(this.formatPrompt(task.prompt), { role: task.role });
             return { ...res, taskId: task.id };
           } catch (err) {
+            this.logger.error(`[Orchestrator] task ${task.id} (role=${task.role}) failed: ${err.message}`);
             return { taskId: task.id, error: err.message, response: '' };
           }
         })

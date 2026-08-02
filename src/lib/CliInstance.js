@@ -8,9 +8,10 @@ import { StreamCleaner } from './StreamCleaner.js';
 import { getProvider } from '../providers/index.js';
 import { applyDexFilter } from './DexFilter.js';
 import { checkProviderAuthStatus, AUTH_STATUS, resolveExecutable } from './ProviderAuthStatus.js';
+import { Logger } from './Logger.js';
 
 export class CliInstance extends EventEmitter {
-  constructor(id, config) {
+  constructor(id, config, logger = null) {
     super();
     this.id = id;
     this.config = config;
@@ -26,6 +27,12 @@ export class CliInstance extends EventEmitter {
     this.responseResolve = null;
     this.taskCount = 0;
     this.provider = getProvider(this.config.provider || 'agy');
+    // CliPool normally injects its shared Logger (built from the full app config, which
+    // includes config.logging); constructing one here from `config` (a per-instance
+    // strategy config without a `logging` key) falls back to Logger's own defaults so a
+    // directly-constructed CliInstance (as in test/unauthenticated-provider.test.js)
+    // still logs somewhere sane instead of throwing.
+    this.logger = logger || new Logger(config);
   }
 
   /**
@@ -94,6 +101,7 @@ export class CliInstance extends EventEmitter {
       this.readyTimeout = setTimeout(() => {
         if (this.status === 'starting') {
           this.status = 'failed';
+          this.logger.error(`[CliInstance ${this.id}] ready timeout after ${spawnConfig.readyTimeout}ms (readyString=${JSON.stringify(spawnConfig.readyString)})`);
           this.readyResolve = null;
           this.readyReject = null;
           reject(new Error(`Ready timeout after ${spawnConfig.readyTimeout}ms`));
@@ -102,6 +110,7 @@ export class CliInstance extends EventEmitter {
 
       try {
         const executable = authResult.executable || resolveExecutable(spawnConfig.executable) || spawnConfig.executable;
+        this.logger.debug(`[CliInstance ${this.id}] spawning PTY: ${executable} ${(spawnConfig.args || []).join(' ')}`);
 
         this.process = pty.spawn(executable, spawnConfig.args, {
           name: 'xterm-256color',
@@ -120,6 +129,7 @@ export class CliInstance extends EventEmitter {
         this.process.onExit(({ exitCode, signal }) => {
           const prevStatus = this.status;
           this.status = 'killed';
+          this.logger.debug(`[CliInstance ${this.id}] PTY exited (code=${exitCode}, signal=${signal}, prevStatus=${prevStatus})`);
           this.emit('exit', { code: exitCode, signal });
           if (prevStatus === 'starting' && this.readyReject) {
             if (this.readyTimeout) clearTimeout(this.readyTimeout);
@@ -128,11 +138,13 @@ export class CliInstance extends EventEmitter {
             const errDetail = authErr
               ? `Provider "${this.provider.name}" (executable: ${spawnConfig.executable}) is unauthenticated or requires login: "${authErr}"`
               : `Provider process "${spawnConfig.executable}" exited during startup with exit code ${exitCode}. Output: ${this.buffer.trim() || 'none'}`;
+            this.logger.error(`[CliInstance ${this.id}] failed to become ready: ${errDetail}`);
             const rejectFn = this.readyReject;
             this.readyResolve = null;
             this.readyReject = null;
             rejectFn(new Error(errDetail));
           } else if (prevStatus === 'busy' && this.responseResolve) {
+            this.logger.error(`[CliInstance ${this.id}] crashed mid-task`);
             this.responseResolve.reject(new Error('Instance crashed mid-task'));
           }
         });
@@ -179,6 +191,7 @@ export class CliInstance extends EventEmitter {
       }
       if (isMatch) {
         this.status = 'idle';
+        this.logger.debug(`[CliInstance ${this.id}] ready string detected, instance idle`);
         if (this.readyTimeout) clearTimeout(this.readyTimeout);
         this.emit('ready', { id: this.id });
         if (this.readyResolve) {
@@ -247,6 +260,7 @@ export class CliInstance extends EventEmitter {
       const timeout = setTimeout(() => {
         if (this.status === 'busy') {
           this.status = 'idle'; // Recover to idle? Or failed? Spec says idle.
+          this.logger.warn(`[CliInstance ${this.id}] response timeout after ${spawnConfig.responseTimeout}ms, recovering to idle`);
           this.emit('timeout', { id: this.id });
           if (this.responseResolve) {
             this.responseResolve = null;

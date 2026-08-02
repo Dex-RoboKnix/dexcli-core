@@ -1,7 +1,15 @@
 import { v4 as uuidv4 } from 'uuid';
+import { Logger } from './Logger.js';
 
+// Note (loop-bug audit): smartDecompose makes exactly one pool.execute() call to a
+// planning prompt and falls back to the non-LLM decompose() heuristic on empty result
+// or error — there is no retry, no recursion, and no path that re-invokes itself. This
+// module was ruled OUT as a source of the "agents looped" symptom; see CliPool.js's
+// startHealthCheck for the actual unbounded-retry bug.
 export class TaskDecomposer {
-  constructor() {}
+  constructor(logger = null) {
+    this.logger = logger || new Logger();
+  }
 
   decompose(userPrompt) {
     const tasks = [];
@@ -61,10 +69,12 @@ export class TaskDecomposer {
       });
 
       if (tasks.length === 0) {
+        this.logger.warn('[TaskDecomposer] smartDecompose produced 0 tasks, falling back to heuristic decompose()');
         return this.decompose(userPrompt);
       }
       return tasks;
     } catch (err) {
+      this.logger.warn(`[TaskDecomposer] smartDecompose failed (${err.message}), falling back to heuristic decompose()`);
       return this.decompose(userPrompt);
     }
   }
