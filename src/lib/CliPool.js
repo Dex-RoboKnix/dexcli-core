@@ -5,6 +5,16 @@ import { NullApprovalQueue } from '../../../../../packages/dexcli-core/src/null-
 import { HARDCODE_REGEX } from '../../../../../packages/dexspine-core/src/dex838.js';
 import { ProviderRegistry, AGENT_ROLES } from './ProviderRegistry.js';
 import { strategyForProviderId } from '../providers/index.js';
+import { Logger } from './Logger.js';
+
+// Health check re-spawns a replacement instance every tick while the pool is degraded.
+// Dead (failed/killed) instances are never pruned from this.instances (see
+// _pruneDeadInstances), so without a cap this would retry forever, once per tick,
+// spawning a brand-new PTY process each time with no backoff — the "agents looped"
+// symptom. MAX_CONSECUTIVE_SPAWN_FAILURES bounds that: after this many consecutive
+// failed respawn attempts, the pool stops trying and emits 'pool:respawn_exhausted'
+// instead of hanging forever.
+const MAX_CONSECUTIVE_SPAWN_FAILURES = 5;
 
 export class CliPool extends EventEmitter {
   constructor(config) {
@@ -15,6 +25,8 @@ export class CliPool extends EventEmitter {
     this.healthCheckInterval = null;
     this.instanceCounter = 0;
     this.approvalQueue = new NullApprovalQueue();
+    this.logger = new Logger(config);
+    this._consecutiveSpawnFailures = 0;
     // ProviderRegistry.getRoleConfig() is the resolution layer for "which vendor and
     // model serves this role" — CliPool never reads a hardcoded 'gemini' config key
     // directly, it asks the registry, then maps the resolved provider to a spawn
@@ -53,10 +65,12 @@ export class CliPool extends EventEmitter {
   async _spawnInstance(role = AGENT_ROLES.SUBAGENT_IMPLEMENTATION) {
     const instanceConfig = this._resolveInstanceConfig(role);
     const id = `${instanceConfig.provider}-${this.instanceCounter++}`;
-    const instance = new CliInstance(id, instanceConfig);
+    this.logger.debug(`[CliPool] spawning instance ${id} (role=${role}, provider=${instanceConfig.provider})`);
+    const instance = new CliInstance(id, instanceConfig, this.logger);
     this.instances.push(instance);
-    
+
     instance.on('exit', (info) => {
+      this.logger.warn(`[CliPool] instance ${id} exited`, info);
       this.emit('instance:crashed', { id, ...info });
     });
 
@@ -67,11 +81,30 @@ export class CliPool extends EventEmitter {
 
     try {
       await instance.start();
+      this.logger.info(`[CliPool] instance ${id} ready`);
+      this._consecutiveSpawnFailures = 0;
       this.emit('instance:ready', { id });
       return instance;
     } catch (err) {
+      this.logger.error(`[CliPool] instance ${id} failed to spawn/start: ${err.message}`);
       this.emit('instance:error', { id, error: err.message });
       throw err;
+    }
+  }
+
+  /**
+   * Remove failed/killed instances from the pool roster. Without this, a bad spawn
+   * (e.g. wrong executable, unauthenticated provider, or the 'mock' provider used in
+   * tests) leaves a dead entry in this.instances forever. startHealthCheck's degraded
+   * check counts only healthy instances, so a growing pile of dead ones keeps the pool
+   * looking permanently degraded and keeps triggering new spawn attempts indefinitely.
+   */
+  _pruneDeadInstances() {
+    const before = this.instances.length;
+    this.instances = this.instances.filter(i => i.status !== 'failed' && i.status !== 'killed');
+    const pruned = before - this.instances.length;
+    if (pruned > 0) {
+      this.logger.debug(`[CliPool] pruned ${pruned} dead instance(s) from roster`);
     }
   }
 
@@ -145,14 +178,19 @@ export class CliPool extends EventEmitter {
       instance.assignRole(options.role);
     }
 
+    this.logger.debug(`[CliPool] dispatching to ${instance.id} (role=${instance.role || 'none'})`);
+
     try {
       const response = await instance.send(prompt);
+      this.logger.debug(`[CliPool] ${instance.id} completed task`);
       if (instance.needsRecycle()) {
+        this.logger.info(`[CliPool] recycling ${instance.id} after ${instance.taskCount} tasks`);
         this.recycle(instance.id);
       }
       this._processQueue();
       return { instanceId: instance.id, response, role: instance.role };
     } catch (err) {
+      this.logger.error(`[CliPool] ${instance.id} task failed: ${err.message}`);
       this._processQueue();
       throw err;
     }
@@ -178,18 +216,51 @@ export class CliPool extends EventEmitter {
 
   startHealthCheck() {
     const intervalMs = 5000;
-    this.healthCheckInterval = setInterval(() => {
-      // Respawn unexpectedly killed instances if pool is degraded
-      const healthyCount = this.instances.filter(i => i.status !== 'failed' && i.status !== 'killed').length;
-      const initialSize = this.config.pool.initialSize || 2;
-      
-      if (healthyCount < initialSize) {
-        this.emit('pool:degraded', { healthy: healthyCount, total: initialSize });
-        this._spawnInstance().catch(() => {});
+    this.healthCheckInterval = setInterval(() => this._healthCheckTick(), intervalMs);
+  }
+
+  /**
+   * One health-check tick: prune dead instances, respawn if degraded (bounded by
+   * MAX_CONSECUTIVE_SPAWN_FAILURES), then scale down excess idle instances. Extracted
+   * from startHealthCheck's setInterval callback so tests can drive it synchronously
+   * without waiting on the real 5s interval — see test/pool-respawn-loop.test.js.
+   */
+  _healthCheckTick() {
+    // Dead instances must be pruned before counting, otherwise a permanently-failed
+    // spawn (bad executable, unauthenticated provider, mock provider that exits
+    // immediately) piles up in this.instances forever and healthyCount never
+    // recovers — see _pruneDeadInstances for the full story.
+    this._pruneDeadInstances();
+
+    const healthyCount = this.instances.length;
+    const initialSize = this.config.pool.initialSize || 2;
+
+    if (healthyCount < initialSize) {
+      if (this._consecutiveSpawnFailures >= MAX_CONSECUTIVE_SPAWN_FAILURES) {
+        // Bounded retry guard: stop trying to respawn after repeated consecutive
+        // failures instead of looping forever, once per health-check tick, with no
+        // backoff. This is the fix for the "agents looped" bug report — previously
+        // there was no cap here at all.
+        this.logger.error(
+          `[CliPool] pool degraded (${healthyCount}/${initialSize} healthy) and ` +
+          `${this._consecutiveSpawnFailures} consecutive respawn attempts have failed — ` +
+          `giving up on auto-respawn. Check provider CLI installation/auth.`
+        );
+        this.emit('pool:respawn_exhausted', { healthy: healthyCount, total: initialSize, attempts: this._consecutiveSpawnFailures });
+        return;
       }
 
-      this.scaleDown();
-    }, intervalMs);
+      this.logger.warn(`[CliPool] pool degraded: ${healthyCount}/${initialSize} healthy instances`);
+      this.emit('pool:degraded', { healthy: healthyCount, total: initialSize });
+      this._spawnInstance().catch((err) => {
+        this._consecutiveSpawnFailures++;
+        this.logger.error(
+          `[CliPool] respawn attempt ${this._consecutiveSpawnFailures}/${MAX_CONSECUTIVE_SPAWN_FAILURES} failed: ${err.message}`
+        );
+      });
+    }
+
+    this.scaleDown();
   }
 
   scaleDown() {

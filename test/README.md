@@ -19,12 +19,17 @@ Tests that run logic checks without initializing real PTY instances via `node-pt
 - `approval-queue.test.js` — Interception and approval queue mechanics using mock instances.
 - `production-lock.js` — Package integrity and forbidden module checks.
 - `verify-config-loader.js` — Default configuration loading checks.
+- `logger.test.js` — Logger level filtering, lazy dir/file creation, and append behavior.
 
 ### 2. PTY Tier (`npm run test:pty`)
 Tests that require spawning real sub-processes or pseudo-terminals via `node-pty`.
 
 - `smoke-test.js` — End-to-end swarm execution against a mock CLI process over PTY.
 - `phase3-check.js` — Single-shot and piped mode integration tests via process execution.
+- `pool-respawn-loop.test.js` — Regression test for the unbounded health-check respawn
+  loop (the "agents looped" bug): drives `CliPool._healthCheckTick()` directly against a
+  provider that can never become ready and asserts the pool gives up after
+  `MAX_CONSECUTIVE_SPAWN_FAILURES` instead of spawning a new PTY process forever.
 
 ## Why the Split Exists
 

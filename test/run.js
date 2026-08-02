@@ -20,12 +20,14 @@ export const PURE_TESTS = [
   'phase6-check.js',
   'approval-queue.test.js',
   'production-lock.js',
-  'verify-config-loader.js'
+  'verify-config-loader.js',
+  'logger.test.js'
 ];
 
 export const PTY_TESTS = [
   'smoke-test.js',
-  'phase3-check.js'
+  'phase3-check.js',
+  'pool-respawn-loop.test.js'
 ];
 
 function verifyAllTestsRegistered() {
