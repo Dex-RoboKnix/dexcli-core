@@ -1,4 +1,7 @@
 import blessed from 'blessed';
+import { applyDexFilter } from './DexFilter.js';
+
+const STREAM_FLUSH_MS = 150;
 
 export class TUI {
   constructor({ pool, orchestrator, session, config }) {
@@ -45,7 +48,7 @@ export class TUI {
       tags: true,
       label: ' Gemini Swarm Output ',
       scrollable: true,
-      alwaysScroll: true,
+      alwaysScroll: false,
       scrollbar: {
         ch: '█',
         style: { fg: 'blue' }
@@ -125,9 +128,22 @@ export class TUI {
   }
 
   setupEvents() {
+    // Raw PTY data fires on every chunk from every instance, including idle ones
+    // sitting on a chatty provider (redraw spinners, live status lines, etc.) — piping
+    // each chunk straight to a 1-line-per-call blessed.log with alwaysScroll used to
+    // flood the pane faster than a terminal can render and yank scroll to the bottom
+    // on every line, making it unreadable and unscrollable. Buffer chunks per instance
+    // and flush on a short timer instead, collapsing repeats through DexFilter so a
+    // provider's idle chatter doesn't dominate the pane.
+    this._streamBuffers = new Map(); // id -> chunk[]
+    this._streamFlushTimer = null;
+
     this.pool.on('instance:data', ({ id, chunk }) => {
-      // Stream LLM output to pane
-      this.outputPane.log(`{blue-fg}[${id}]{/blue-fg} ${chunk}`);
+      if (!chunk || !chunk.trim()) return; // drop pure whitespace/cursor-move noise
+      const buf = this._streamBuffers.get(id) || [];
+      buf.push(chunk);
+      this._streamBuffers.set(id, buf);
+      this._scheduleStreamFlush();
     });
 
     this.pool.on('instance:ready', ({ id }) => {
@@ -142,6 +158,32 @@ export class TUI {
     this.pool.on('pool:degraded', ({ healthy, total }) => {
       this.outputPane.log(`{yellow-fg}Warning: Pool degraded (${healthy}/${total} instances healthy){/yellow-fg}`);
     });
+  }
+
+  _scheduleStreamFlush() {
+    if (this._streamFlushTimer) return;
+    this._streamFlushTimer = setTimeout(() => this._flushStreamBuffers(), STREAM_FLUSH_MS);
+  }
+
+  _flushStreamBuffers() {
+    this._streamFlushTimer = null;
+    if (this._streamBuffers.size === 0) return;
+
+    // Only auto-follow new output if the user was already at (or near) the bottom —
+    // otherwise a user scrolled back to read something would get yanked back down.
+    const wasAtBottom = this.outputPane.getScrollPerc() >= 95;
+
+    for (const [id, chunks] of this._streamBuffers) {
+      const combined = chunks.join('');
+      const { text: collapsed } = applyDexFilter(combined);
+      if (collapsed.trim()) {
+        this.outputPane.log(`{blue-fg}[${id}]{/blue-fg} ${collapsed}`);
+      }
+    }
+    this._streamBuffers.clear();
+
+    if (wasAtBottom) this.outputPane.setScrollPerc(100);
+    this.screen.render();
   }
 
   async handleInput() {
@@ -262,6 +304,7 @@ export class TUI {
 
   async shutdown() {
     clearInterval(this.statusInterval);
+    if (this._streamFlushTimer) clearTimeout(this._streamFlushTimer);
     this.outputPane.log('Shutting down Gemini swarm...');
     await this.saveSession();
     await this.pool.shutdown();

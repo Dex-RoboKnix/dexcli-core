@@ -21,7 +21,8 @@ export const PURE_TESTS = [
   'approval-queue.test.js',
   'production-lock.js',
   'verify-config-loader.js',
-  'logger.test.js'
+  'logger.test.js',
+  'tui-stream-flush.test.js'
 ];
 
 export const PTY_TESTS = [
