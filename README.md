@@ -1,4 +1,28 @@
-# DexCLI
+---
+provenance: AAC
+layer: L2
+---
+
+# DexCLI (dexcli-core)
+
+**Layer: L2.** DexCLI is the Gemini-first multi-agent swarm orchestrator, shipped via terminal and web. It conforms to DEX838 (L1, in [dexspine-core](https://github.com/Dex-RoboKnix/dexspine-core)). Pre-1.0 prototype, not a shipped product.
+
+**Not used by dex.md directly.** dex.md does not install or pin this repo.
+
+**Licence.** OpenCore: AGPL-3.0 Core. No Enterprise edition exists yet. See "Licence" below for a conflict to resolve.
+
+## Which document do I read?
+
+| You are | Read |
+|---|---|
+| An agent working on this repo | `START.md`, then `CLAUDE.md` |
+| A person working on this repo | `docs/README.md` |
+| Releasing | `RELEASING.md` |
+| After the product itself | the original README below |
+
+## Original README
+
+### DexCLI (original)
 
 > **Canonical copy:** This is the canonical interactive TUI swarm orchestrator with real PTY execution; `packages/dexcli-core` contains the canonical Layer 8 safety-gate logic (`NullApprovalQueue`) to be integrated into this orchestrator.
 
@@ -87,3 +111,7 @@ pool:
 ## License
 
 MIT
+
+## Licence
+
+`LICENSE` and `package.json` currently say MIT; the repo contract says AGPL-3.0 Core. Not changed here, awaiting the owner's decision.
