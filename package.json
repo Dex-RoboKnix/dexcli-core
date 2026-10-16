@@ -29,5 +29,5 @@
     "tui",
     "pty"
   ],
-  "license": "MIT"
+  "license": "AGPL-3.0-or-later"
 }
